@@ -10,10 +10,13 @@ const app = express();
 const port = 3000;
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
 
 function generarToken(usuario) {
   const payload = {
     userId: usuario.id,
+    name: usuario.name,
+    email: usuario.email,
     sessionId: usuario.sessionId,
   };
   const token = jwt.sign(payload, 'secreto', { expiresIn: '1h' });
@@ -32,7 +35,6 @@ function verificarToken(req, res, next) {
     }
 
     req.user = decoded;
-    req.session.emailSesion = req.user.email;
     next();
   });
 }
@@ -79,7 +81,6 @@ app.get('/usuario', verificarToken, (req, res) => {
     res.json(false);
     return;
   }
-
   // Obtener la información del usuario autenticado
   const { name, email } = req.user;
 
@@ -138,7 +139,6 @@ app.post('/usuario', (req, res) => {
 app.post('/ingresar', (req, res) => {
   // Obtener los datos de inicio de sesión desde el cuerpo de la solicitud
   const { email, password } = req.body;
-
   // Verificar si faltan datos requeridos
   if (!email || !password) {
     return res.status(400).json({
@@ -156,16 +156,14 @@ app.post('/ingresar', (req, res) => {
         // Almacenar el token en una cookie
         res.cookie('token', token, { httpOnly: true });
 
-        // Establecer la sesión de autenticación
-        req.session.user = user;
-
-        res.status(200).json({ usuario: usuario });
+        res.json(true);
       } else {
         // Los datos de inicio de sesión son incorrectos, retornar false
         res.json(false);
       }
     })
     .catch((error) => {
+      console.log('Error al buscar el usuario en la base de datos:', error);
       res.status(500).json({
         error: "Hubo un problema al registrar el usuario.",
       });
@@ -207,7 +205,8 @@ app.post('/transferir', verificarToken, (req, res) => {
               message: 'Usuario de destino no encontrado'
             });
           }
-
+          authUser.monto=authUser.monto ?? 0;
+          destUser.monto=destUser.monto ?? 0;
           // Verificar que el usuario autenticado tenga suficiente monto
           if (authUser.monto < amount) {
             return res.status(400).json({
@@ -215,6 +214,7 @@ app.post('/transferir', verificarToken, (req, res) => {
               message: 'Monto insuficiente'
             });
           }
+          
 
           // Realizar la transferencia descontando el monto desde el usuario autenticado y sumándolo al usuario de destino
           authUser.monto -= amount;
@@ -317,6 +317,7 @@ app.post('/recargar', verificarToken, (req, res) => {
       }
 
       // Realizar la recarga sumando el monto al usuario autenticado
+      authUser.monto=authUser.monto ?? 0;
       authUser.monto += amount;
 
       // Registrar la recarga en el historial del usuario autenticado
@@ -351,7 +352,7 @@ app.post('/recargar', verificarToken, (req, res) => {
     });
 });
 
-app.post('/retirar', (req, res) => {
+app.post('/retirar',verificarToken, (req, res) => {
   const { amount, credit_card } = req.body;
 
   // Verificar que los campos requeridos estén presentes
@@ -372,7 +373,8 @@ app.post('/retirar', (req, res) => {
           message: 'Usuario autenticado no encontrado'
         });
       }
-
+      authUser.monto=authUser.monto ?? 0;
+      
       // Verificar si el usuario tiene saldo igual o superior al monto a retirar
       if (authUser.monto < amount) {
         return res.status(400).json({
@@ -417,20 +419,14 @@ app.post('/retirar', (req, res) => {
 });
 
 app.get('/salir', (req, res) => {
-  // Eliminar la sesión
-  req.session.destroy((error) => {
-    if (error) {
-      console.error('Error al eliminar la sesión:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error al salir'
-      });
-    } else {
-      // La sesión se eliminó correctamente
-      res.json(true);
-    }
+  if(!req.cookies.token){
+    res.send(false)
+    return;
+  }
+  res.clearCookie('token');
+  res.session = null;
+  res.send(true);
   });
-});
 app.get('/movimientos', verificarToken, (req, res) => {
   // Buscar el usuario autenticado en la base de datos
   User.findOne({ email: req.user.email })
